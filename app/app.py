@@ -396,15 +396,25 @@ def generate_acknowledgment(cur, app_id):
     row = cur.fetchone()
     pdf = FPDF()
     pdf.add_page()
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    if os.path.exists(font_path):
-        pdf.add_font("DejaVu", "", font_path)
-        pdf.add_font("DejaVu", "B", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
-        pdf.add_font("DejaVu", "I", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf")
+    font_dir = "/usr/share/fonts/truetype/dejavu"
+    font_name = "Helvetica"
+    bold_style = "B"
+    italic_style = "I"
+    regular_path = os.path.join(font_dir, "DejaVuSans.ttf")
+    if os.path.exists(regular_path):
+        pdf.add_font("DejaVu", "", regular_path)
         font_name = "DejaVu"
-    else:
-        font_name = "Helvetica"
-    pdf.set_font(font_name, "B", 14)
+        bold_path = os.path.join(font_dir, "DejaVuSans-Bold.ttf")
+        italic_path = os.path.join(font_dir, "DejaVuSans-Oblique.ttf")
+        if os.path.exists(bold_path):
+            pdf.add_font("DejaVu", "B", bold_path)
+        else:
+            bold_style = ""
+        if os.path.exists(italic_path):
+            pdf.add_font("DejaVu", "I", italic_path)
+        else:
+            italic_style = ""
+    pdf.set_font(font_name, bold_style, 14)
     pdf.cell(0, 10, "GOVERNMENT OF PURVANCHAL", ln=1, align="C")
     pdf.set_font(font_name, "", 11)
     pdf.cell(0, 8, "Department of Social Welfare", ln=1, align="C")
@@ -422,7 +432,7 @@ def generate_acknowledgment(cur, app_id):
         except Exception:
             pdf.cell(0, 8, "?", border=1, ln=1)
     pdf.ln(6)
-    pdf.set_font(font_name, "I", 9)
+    pdf.set_font(font_name, italic_style, 9)
     pdf.multi_cell(0, 5, "This is a computer generated acknowledgment. Processing SLA "
                          "as per the Purvanchal Right to Public Services Act applies.")
     return bytes(pdf.output())
