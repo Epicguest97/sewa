@@ -13,6 +13,7 @@ import csv
 import random
 import hashlib
 import configparser
+import uuid
 from datetime import datetime, date, timedelta
 
 import requests
@@ -20,6 +21,7 @@ import psycopg2
 from flask import (Flask, request, session, redirect, url_for, render_template,
                    flash, send_file, abort, jsonify)
 from fpdf import FPDF
+from upload_validation import validate_uploaded_document
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -214,18 +216,17 @@ def upload():
     if request.method == "POST":
         f = request.files.get("document")
         if f is None or f.filename == "":
-            flash("ERR_VAL_47")
+            flash("Please select a JPG, JPEG, or PDF document.")
             return render_template("upload.html")
-        filename = f.filename.lower()
-        content = f.read()
-        if not filename.endswith(".pdf"):
-            flash("ERR_VAL_47")
-            return render_template("upload.html")
-        if len(content) > 102400:
-            flash("ERR_VAL_47")
+        content, extension, error = validate_uploaded_document(f)
+        if error:
+            flash(error)
             return render_template("upload.html")
         os.makedirs(UPLOAD_DIR, exist_ok=True)
-        path = os.path.join(UPLOAD_DIR, "%s_%s" % (session["verified_mobile"], filename))
+        filename = "%s_%s%s" % (
+            session["verified_mobile"], uuid.uuid4().hex, extension
+        )
+        path = os.path.join(UPLOAD_DIR, filename)
         with open(path, "wb") as out:
             out.write(content)
         session["doc_path"] = path
