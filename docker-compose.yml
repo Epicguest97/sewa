@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: sewasetu
       POSTGRES_USER: sewasetu
-      POSTGRES_PASSWORD: sewasetu123
+      POSTGRES_PASSWORD: ${SEWA_DB_PASSWORD:?Set SEWA_DB_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./app/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -12,6 +12,11 @@ services:
 
   app:
     build: ./app
+    environment:
+      SEWA_SECRET_KEY: ${SEWA_SECRET_KEY:?Set SEWA_SECRET_KEY in .env}
+      SEWA_ADMIN_USERNAME: ${SEWA_ADMIN_USERNAME:?Set SEWA_ADMIN_USERNAME in .env}
+      SEWA_ADMIN_PASSWORD: ${SEWA_ADMIN_PASSWORD:?Set SEWA_ADMIN_PASSWORD in .env}
+      SEWA_DB_PASSWORD: ${SEWA_DB_PASSWORD:?Set SEWA_DB_PASSWORD in .env}
     ports:
       - "8000:8000"
     depends_on:
@@ -26,13 +31,15 @@ services:
     command: ["cron", "-f"]
     depends_on:
       - db
+    environment:
+      SEWA_DB_PASSWORD: ${SEWA_DB_PASSWORD:?Set SEWA_DB_PASSWORD in .env}
     volumes:
       - applogs:/var/log/sewasetu
 
   smsgw:
     build: ./smsgw
-    # internal only — reached by the app over the docker network and exposed to
-    # users via the app at /__gateway/ (so no second host port is needed)
+    # Internal only: the app uses this service to send SMS, but never exposes
+    # its inbox or console to portal users.
     expose:
       - "8025"
 

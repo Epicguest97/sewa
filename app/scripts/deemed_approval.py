@@ -28,6 +28,9 @@ with open(CONFIG_PATH) as fh:
 
 SLA_DAYS = config.getint("pension", "sla_days")
 SMS_GATEWAY_URL = config.get("app", "sms_gateway_url")
+DB_PASSWORD = os.environ.get("SEWA_DB_PASSWORD")
+if not DB_PASSWORD:
+    raise RuntimeError("SEWA_DB_PASSWORD must be configured")
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
 
@@ -37,7 +40,7 @@ def main():
         port=config.get("database", "port"),
         dbname=config.get("database", "name"),
         user=config.get("database", "user"),
-        password=config.get("database", "password"),
+        password=DB_PASSWORD,
     )
     cur = conn.cursor()
     now = datetime.now(INDIA_TZ)

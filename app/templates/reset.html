@@ -3,7 +3,11 @@
 <h2>Reset Password</h2>
 <form method="post">
   <label>Registered Mobile Number</label>
-  <input type="text" name="mobile">
-  <p><button class="btn" type="submit">Reset Password</button></p>
+  <input type="text" name="mobile" value="{{ mobile or '' }}" required>
+  {% if otp_requested %}
+  <label>Verification Code</label>
+  <input type="text" name="otp" inputmode="numeric" pattern="\d{6}" maxlength="6" required>
+  {% endif %}
+  <p><button class="btn" type="submit">{% if otp_requested %}Confirm Reset{% else %}Send Verification Code{% endif %}</button></p>
 </form>
 {% endblock %}

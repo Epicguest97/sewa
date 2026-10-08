@@ -14,6 +14,7 @@ import random
 import hashlib
 import configparser
 import uuid
+import secrets
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 
@@ -32,11 +33,18 @@ config = configparser.ConfigParser()
 config.read(os.path.join(BASE_DIR, "config", "app.ini"))
 
 app = Flask(__name__)
-app.secret_key = config.get("app", "secret_key")
+SESSION_SECRET = os.environ.get("SEWA_SECRET_KEY")
+if not SESSION_SECRET:
+    raise RuntimeError("SEWA_SECRET_KEY must be configured outside the source tree")
+app.secret_key = SESSION_SECRET
 app.config["PERMANENT_SESSION_LIFETIME"] = 300
 
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "sewasetu@123"
+ADMIN_USERNAME = os.environ.get("SEWA_ADMIN_USERNAME")
+ADMIN_PASSWORD = os.environ.get("SEWA_ADMIN_PASSWORD")
+DB_PASSWORD = os.environ.get("SEWA_DB_PASSWORD")
+if not ADMIN_USERNAME or not ADMIN_PASSWORD or not DB_PASSWORD:
+    raise RuntimeError("SEWA_ADMIN_USERNAME, SEWA_ADMIN_PASSWORD, and "
+                       "SEWA_DB_PASSWORD must be configured")
 
 SMS_GATEWAY_URL = config.get("app", "sms_gateway_url")
 OTP_VALIDITY_SECONDS = config.getint("app", "otp_validity_seconds")
@@ -80,7 +88,7 @@ def get_db():
             port=config.get("database", "port"),
             dbname=config.get("database", "name"),
             user=config.get("database", "user"),
-            password=config.get("database", "password"),
+            password=DB_PASSWORD,
         )
         _db_pool_pid = pid
     return _db_pool.getconn()
@@ -144,16 +152,9 @@ def about():
 @app.route("/__gateway/", defaults={"subpath": ""})
 @app.route("/__gateway/<path:subpath>")
 def gateway_proxy(subpath):
-    # Convenience proxy to the internal SMS gateway, so the OTP inbox is reachable
-    # on the main site without opening a second port on the host. The gateway
-    # itself runs only on the internal network.
-    try:
-        r = requests.get(SMS_GATEWAY_URL + "/" + subpath,
-                         params=request.args, timeout=5)
-        return (r.content, r.status_code,
-                {"Content-Type": r.headers.get("Content-Type", "text/html")})
-    except Exception as e:
-        return ("SMS gateway unreachable: %s" % e, 502)
+    # The SMS gateway contains OTPs and other sensitive messages. It is
+    # intentionally internal-only and must never be republished here.
+    abort(404)
 
 
 # ---------------------------------------------------------------------------
@@ -460,14 +461,15 @@ def status_login():
 
 @app.route("/application/<int:app_id>")
 def view_application(app_id):
-    if not session.get("logged_in"):
+    if not session.get("logged_in") or not session.get("portal_mobile"):
         flash("Please login to view application status.")
         return redirect(url_for("status_login"))
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT application_no, applicant_name, mobile, dob, village, block, "
                 "bank_account, ifsc, status, submitted_at, decided_at "
-                "FROM applications WHERE id = %s", (app_id,))
+                "FROM applications WHERE id = %s AND mobile = %s",
+                (app_id, session["portal_mobile"]))
     row = cur.fetchone()
     cur.close(); release_db(conn)
     if not row:
@@ -574,41 +576,68 @@ def edit_application(app_id):
 
 @app.route("/ack/<int:app_id>.pdf")
 def ack_pdf(app_id):
-    path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
-    if not os.path.exists(path):
-        conn = get_db()
-        cur = conn.cursor()
+    mobile = session.get("portal_mobile")
+    if not session.get("admin") and not mobile:
+        return redirect(url_for("status_login"))
+    conn = get_db()
+    cur = conn.cursor()
+    if session.get("admin"):
         cur.execute("SELECT id FROM applications WHERE id = %s", (app_id,))
-        if not cur.fetchone():
-            cur.close(); release_db(conn)
-            abort(404)
-        data = generate_acknowledgment(cur, app_id)
+    else:
+        cur.execute("SELECT id FROM applications WHERE id = %s AND mobile = %s",
+                    (app_id, mobile))
+    if not cur.fetchone():
         cur.close(); release_db(conn)
-        return send_file(io.BytesIO(data), mimetype="application/pdf")
-    return send_file(path, mimetype="application/pdf")
+        abort(404)
+    path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)
+    if os.path.exists(path):
+        cur.close(); release_db(conn)
+        return send_file(path, mimetype="application/pdf")
+    data = generate_acknowledgment(cur, app_id)
+    cur.close(); release_db(conn)
+    return send_file(io.BytesIO(data), mimetype="application/pdf")
 
 
 @app.route("/status/reset", methods=["GET", "POST"])
 def reset_password():
     if request.method == "POST":
-        mobile = request.form.get("mobile", "")
+        mobile = request.form.get("mobile", "").strip()
+        otp = request.form.get("otp", "").strip()
         conn = get_db()
         cur = conn.cursor()
-        # fetch account for reset
-        cur.execute("SELECT mobile FROM portal_users WHERE mobile = '%s'" % mobile)
+        cur.execute("SELECT mobile FROM portal_users WHERE mobile = %s", (mobile,))
         row = cur.fetchone()
-        if row:
-            cur.execute("SELECT dob FROM applications WHERE mobile = '%s' LIMIT 1" % mobile)
-            r2 = cur.fetchone()
-            if r2:
-                newpass = r2[0].strftime("%d%m%Y")
-                cur.execute("UPDATE portal_users SET password_hash = %s WHERE mobile = %s",
-                            (hash_password(newpass), row[0]))
-                conn.commit()
-                send_sms(row[0], "Sewa Setu: your password has been reset to your "
-                                 "date of birth (DDMMYYYY).")
+        if not otp:
+            if row:
+                reset_code = str(random.randint(100000, 999999))
+                session["reset_mobile"] = mobile
+                session["reset_code"] = reset_code
+                session["reset_created_at"] = database_now().isoformat()
+                send_sms(mobile, "Your Sewa Setu password reset code is %s." % reset_code)
+            cur.close(); release_db(conn)
+            flash("If the mobile number exists, a verification code has been sent.")
+            return render_template("reset.html", otp_requested=True, mobile=mobile)
+        if (session.get("reset_mobile") != mobile or
+                session.get("reset_code") != otp):
+            cur.close(); release_db(conn)
+            flash("Invalid or expired verification code.")
+            return render_template("reset.html", otp_requested=True, mobile=mobile)
+        created = datetime.fromisoformat(session.get("reset_created_at", ""))
+        if (database_now() - created).total_seconds() > OTP_VALIDITY_SECONDS:
+            cur.close(); release_db(conn)
+            session.pop("reset_code", None)
+            flash("Invalid or expired verification code.")
+            return render_template("reset.html", otp_requested=True, mobile=mobile)
+        newpass = secrets.token_urlsafe(9)
+        cur.execute("UPDATE portal_users SET password_hash = %s WHERE mobile = %s",
+                    (hash_password(newpass), mobile))
+        conn.commit()
+        send_sms(mobile, "Sewa Setu: your temporary password is %s." % newpass)
+        session.pop("reset_mobile", None)
+        session.pop("reset_code", None)
+        session.pop("reset_created_at", None)
         cur.close(); release_db(conn)
-        flash("If the mobile number exists, the password has been reset and sent by SMS.")
+        flash("Your password was reset and sent to your registered mobile number.")
     return render_template("reset.html")
 
 
@@ -684,7 +713,7 @@ def admin_view(app_id):
 
 @app.route("/admin/approve/<int:app_id>", methods=["POST"])
 def admin_approve(app_id):
-    if not session.get("logged_in"):
+    if not session.get("admin"):
         abort(403)
     conn = get_db()
     cur = conn.cursor()
@@ -698,7 +727,7 @@ def admin_approve(app_id):
 
 @app.route("/admin/reject/<int:app_id>", methods=["POST"])
 def admin_reject(app_id):
-    if not session.get("logged_in"):
+    if not session.get("admin"):
         abort(403)
     conn = get_db()
     cur = conn.cursor()
