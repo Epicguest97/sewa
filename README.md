@@ -48,6 +48,7 @@ smsgw/                             Internal simulated SMS gateway
 seed/                              Supplied production seed data
 fixes/                             Fix documentation and Loom summary
 docker-compose.yml                 Local and EC2 deployment
+nginx/                             HTTP/TLS reverse-proxy configurations
 ```
 
 ## Run locally
@@ -96,6 +97,11 @@ nano .env
 docker compose up -d --build
 docker compose ps
 ```
+
+For the public deployment at `https://sewa.mehul.sbs`, first point DNS to the
+EC2 Elastic IP, allow ports 80/443 in the security group, and follow
+[HTTPS_DEPLOYMENT.md](./HTTPS_DEPLOYMENT.md). Nginx terminates TLS and proxies
+to the private Flask container; port 8000 is not published publicly.
 
 Set these values in `.env`:
 

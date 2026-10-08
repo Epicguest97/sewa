@@ -17,14 +17,32 @@ services:
       SEWA_ADMIN_USERNAME: ${SEWA_ADMIN_USERNAME:?Set SEWA_ADMIN_USERNAME in .env}
       SEWA_ADMIN_PASSWORD: ${SEWA_ADMIN_PASSWORD:?Set SEWA_ADMIN_PASSWORD in .env}
       SEWA_DB_PASSWORD: ${SEWA_DB_PASSWORD:?Set SEWA_DB_PASSWORD in .env}
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     depends_on:
       - db
       - smsgw
     volumes:
       - uploads:/var/sewasetu/uploads
       - applogs:/var/log/sewasetu
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot-www:/var/www/certbot:ro
+      - letsencrypt:/etc/letsencrypt:ro
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot-www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
 
   scheduler:
     build: ./app
