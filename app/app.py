@@ -463,6 +463,98 @@ def view_application(app_id):
     return render_template("application.html", a=row, app_id=app_id)
 
 
+@app.route("/application/<int:app_id>/edit", methods=["GET", "POST"])
+def edit_application(app_id):
+    if not session.get("logged_in") or not session.get("portal_mobile"):
+        flash("Please login to edit your application.")
+        return redirect(url_for("status_login"))
+
+    mobile = session["portal_mobile"]
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """SELECT applicant_name, mobile, dob, gender, marital_status,
+                  husband_name, husband_employer, village, block,
+                  bank_account, ifsc, status, submitted_at
+           FROM applications
+           WHERE id = %s AND mobile = %s""",
+        (app_id, mobile))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        abort(404)
+
+    cutoff = database_now() - timedelta(days=SLA_DAYS)
+    if row[11] != "PENDING" or row[12] <= cutoff:
+        cur.close(); conn.close()
+        flash("This application can no longer be edited because processing has "
+              "finished or the 15-day deadline has passed.")
+        return redirect(url_for("view_application", app_id=app_id))
+
+    data = {
+        "applicant_name": row[0],
+        "dob": row[2].strftime("%d/%m/%Y"),
+        "gender": row[3],
+        "marital_status": row[4],
+        "husband_name": row[5] or "",
+        "husband_employer": row[6] or "",
+        "village": row[7],
+        "block": row[8],
+        "bank_account": row[9],
+        "ifsc": row[10],
+    }
+    if request.method == "POST":
+        data.update(request.form.to_dict())
+        name = sanitize(data.get("applicant_name", ""), maxlen=100)
+        dob = parse_dob(data.get("dob", ""))
+        today = india_now().date()
+        if not name:
+            flash("Please enter the applicant's full name.")
+        elif dob is None:
+            flash("Please enter date of birth in DD/MM/YYYY format.")
+        elif dob > today:
+            flash("Date of birth cannot be in the future.")
+        elif age_on_date(dob, today) < MIN_AGE:
+            flash("Applicant must be at least %d years old on the date of application."
+                  % MIN_AGE)
+        elif not data.get("village", "").strip() or not data.get("block", "").strip():
+            flash("Please enter the applicant's village and block.")
+        elif not data.get("bank_account", "").strip() or not data.get("ifsc", "").strip():
+            flash("Please enter the bank account number and IFSC code.")
+        elif (data.get("marital_status") == "Widowed" and
+              (not data.get("husband_name", "").strip() or
+               not data.get("husband_employer", "").strip())):
+            flash("Please enter the husband's name and current employer for a widowed applicant.")
+        else:
+            cur.execute(
+                """UPDATE applications
+                   SET applicant_name = %s, dob = %s, gender = %s,
+                       marital_status = %s, husband_name = %s,
+                       husband_employer = %s, village = %s, block = %s,
+                       bank_account = %s, ifsc = %s
+                   WHERE id = %s AND mobile = %s AND status = 'PENDING'
+                         AND submitted_at > %s""",
+                (name, dob, data.get("gender", ""), data.get("marital_status", ""),
+                 data.get("husband_name", "").strip(),
+                 data.get("husband_employer", "").strip(),
+                 data.get("village", "").strip(), data.get("block", "").strip(),
+                 data.get("bank_account", "").strip(),
+                 data.get("ifsc", "").strip().upper(), app_id, mobile, cutoff))
+            if cur.rowcount != 1:
+                conn.rollback()
+                cur.close(); conn.close()
+                flash("This application can no longer be edited because its status changed.")
+                return redirect(url_for("view_application", app_id=app_id))
+            conn.commit()
+            cur.close(); conn.close()
+            flash("Your application was updated successfully.")
+            return redirect(url_for("view_application", app_id=app_id))
+
+    cur.close(); conn.close()
+    return render_template("edit_application.html", data=data, blocks=BLOCKS,
+                           app_id=app_id)
+
+
 @app.route("/ack/<int:app_id>.pdf")
 def ack_pdf(app_id):
     path = os.path.join(UPLOAD_DIR, "ack", "%d.pdf" % app_id)

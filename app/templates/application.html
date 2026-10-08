@@ -17,5 +17,10 @@
   <tr><th>Submitted</th><td>{{ a[9] }}</td></tr>
   <tr><th>Decided</th><td>{{ a[10] or '-' }}</td></tr>
 </table>
+{% if a[8] == 'PENDING' %}
+<p><a class="btn" href="/application/{{ app_id }}/edit">Edit application</a></p>
+<p class="note">You can correct your application while it is pending and within
+the 15-day processing period.</p>
+{% endif %}
 <p><a href="/ack/{{ app_id }}.pdf">Download Acknowledgment (PDF)</a></p>
 {% endblock %}

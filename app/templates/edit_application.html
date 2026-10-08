@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Edit Application</h2>
+<p class="note">You can correct the details below while your application is
+pending. Changes are not allowed after a decision or after the 15-day
+processing deadline.</p>
+<form method="post">
+  <label>Full Name of Applicant</label>
+  <input type="text" name="applicant_name" maxlength="100" required
+         autocomplete="name" value="{{ data.get('applicant_name','') }}">
+  <label>Date of Birth (DD/MM/YYYY)</label>
+  <input type="text" name="dob" placeholder="DD/MM/YYYY" inputmode="numeric"
+         pattern="\d{2}/\d{2}/\d{4}" maxlength="10" required
+         value="{{ data.get('dob','') }}">
+  <label>Gender</label>
+  <select name="gender">
+    <option value="">--Select--</option>
+    <option {% if data.get('gender')=='Male' %}selected{% endif %}>Male</option>
+    <option {% if data.get('gender')=='Female' %}selected{% endif %}>Female</option>
+    <option {% if data.get('gender')=='Other' %}selected{% endif %}>Other</option>
+  </select>
+  <label>Marital Status</label>
+  <select name="marital_status">
+    <option value="">--Select--</option>
+    <option {% if data.get('marital_status')=='Married' %}selected{% endif %}>Married</option>
+    <option {% if data.get('marital_status')=='Unmarried' %}selected{% endif %}>Unmarried</option>
+    <option {% if data.get('marital_status')=='Widowed' %}selected{% endif %}>Widowed</option>
+  </select>
+  <label>Husband's Name</label>
+  <input type="text" name="husband_name" value="{{ data.get('husband_name','') }}">
+  <label>Husband's Current Employer</label>
+  <input type="text" name="husband_employer" value="{{ data.get('husband_employer','') }}">
+  <label>Village / Town</label>
+  <input type="text" name="village" required value="{{ data.get('village','') }}">
+  <label>Block</label>
+  <select name="block" required>
+    <option value="">--Select--</option>
+    {% for b in blocks %}
+    <option {% if data.get('block')==b %}selected{% endif %}>{{ b }}</option>
+    {% endfor %}
+  </select>
+  <label>Bank Account Number</label>
+  <input type="text" name="bank_account" required value="{{ data.get('bank_account','') }}">
+  <label>IFSC Code</label>
+  <input type="text" name="ifsc" required value="{{ data.get('ifsc','') }}">
+  <p><button class="btn" type="submit">Save Changes</button>
+     <a href="/application/{{ app_id }}">Cancel</a></p>
+</form>
+{% endblock %}
