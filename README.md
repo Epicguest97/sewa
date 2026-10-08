@@ -1,74 +1,108 @@
-# Sewa Setu — Old Age Pension Portal
+# Sewa Setu
 
-Sewa Setu is a Flask and PostgreSQL portal for the Government of Purvanchal's
-Old Age Pension Scheme. Citizens verify their mobile number, complete a
-multi-step application, upload age proof, submit the application, and track
-its status. Department staff can review applications through the admin portal.
+## Old Age Pension Application Portal
 
-This submission focuses on evidence-led fixes to citizen safety, statutory
-processing, data integrity, and production reliability.
+Sewa Setu is a Flask and PostgreSQL web application for managing applications
+for the Old Age Pension Scheme. It supports the complete application journey:
+mobile verification, multilingual citizen data, document upload, application
+tracking, controlled corrections, and departmental review.
 
-## What was fixed
+This repository contains an internship submission focused on **correctness,
+security, statutory compliance, and operational reliability**. The changes
+were made against the existing application and are documented with the
+evidence, root cause, implementation, and verification for each issue.
 
-- **Secure uploads:** JPG/JPEG/PDF signature checks, 5 MB limit, safe generated
-  storage names, and protection against path traversal and extension spoofing.
-- **Names and eligibility:** Unicode-safe names, Unicode PDF output, strict
-  `DD/MM/YYYY` dates, India-time age validation, and exactly-60 eligibility.
-- **Duplicate prevention:** A database uniqueness constraint ensures one
-  application per verified mobile number, including concurrent submissions.
-- **Statutory deadlines:** The application window closes at midnight IST.
-  Untouched applications are deemed approved after 15 days and shown as
-  approved to citizens immediately.
-- **Citizen corrections:** Applicants can edit a pending application within
-  the 15-day processing window. Approved, rejected, deemed-approved, and
-  overdue applications are locked.
-- **Performance:** A bounded PostgreSQL connection pool, SLA query index, and
-  lighter PDF generation address month-end connection exhaustion and timeouts.
-- **Data protection:** The public SMS inbox proxy was removed, application
-  ownership checks were added, PDFs require authorization, password reset was
-  secured with SMS verification, and admin actions require admin authorization.
-- **Secret management:** Flask, admin, and database secrets are supplied
-  through the deployment environment rather than committed source.
+## Submission highlights
 
-Detailed evidence and implementation notes are in [fixes/](./fixes/).
-The presentation-ready overview is [FIXES_SUMMARY.md](./fixes/FIXES_SUMMARY.md).
+| Area | Implemented improvement |
+| --- | --- |
+| Citizen data | Unicode-safe names and multilingual PDF output |
+| Eligibility | Strict `DD/MM/YYYY` date handling and age validation on the application date |
+| Duplicate prevention | Database-enforced one-application-per-mobile rule |
+| Statutory processing | IST application cutoff and 15-day deemed approval |
+| Citizen corrections | Secure editing of eligible pending applications |
+| File security | File type, signature, size, filename, and storage validation |
+| Access control | Citizen ownership checks, protected PDFs, and admin-only decisions |
+| Account security | SMS-verified password reset and environment-managed credentials |
+| Performance | Bounded database pooling, query indexing, and lighter PDF generation |
+| Deployment | Docker Compose topology with private application services and Nginx |
 
-## Repository layout
+## Key functional rules
+
+- Names are normalized without corrupting non-ASCII characters.
+- Date of birth must use `DD/MM/YYYY`, for example `06/06/1960`.
+- The applicant must be at least 60 years old on the India Standard Time date
+  of application.
+- A verified mobile number can have only one application, including during
+  concurrent submissions.
+- The application window closes at midnight Asia/Kolkata time after the
+  configured final application day.
+- An untouched pending application is deemed approved at the 15-day statutory
+  cutoff. Citizens see the approved status immediately; the scheduled job
+  persists the status in the database.
+- Applicants may edit pending applications during the permitted processing
+  window. Approved, rejected, and deemed-approved applications cannot be
+  edited.
+
+## Technical architecture
+
+```text
+Citizen browser
+      |
+      v
+Nginx reverse proxy :80/:443
+      |
+      v
+Flask application :8000 (private Docker network)
+      |                 \
+      v                  v
+PostgreSQL :5432      Internal SMS gateway :8025
+      ^
+      |
+Deemed-approval scheduler
+```
+
+The application, PostgreSQL database, scheduler, and SMS gateway run as
+separate Docker Compose services. Only Nginx is intended to be internet-facing.
+The application, database, and SMS gateway ports are not published publicly.
+Certificate files and the ACME webroot use persistent named volumes.
+
+## Repository structure
 
 ```text
 app/
-  app.py                         Flask application
-  application_validation.py      Shared date, age, and Unicode validation
-  upload_validation.py            Upload type and size validation
-  schema.sql                      PostgreSQL schema and indexes
-  scripts/deemed_approval.py      15-day deemed-approval job
-  templates/                      Citizen and admin pages
-  tests/                          Focused regression tests
-smsgw/                             Internal simulated SMS gateway
-seed/                              Supplied production seed data
-fixes/                             Fix documentation and Loom summary
-docker-compose.yml                 Local and EC2 deployment
-nginx/                             HTTP/TLS reverse-proxy configurations
+  app.py                         Flask routes and application services
+  application_validation.py      Shared Unicode, date, and age validation
+  upload_validation.py           Upload type, signature, and size validation
+  schema.sql                     PostgreSQL schema and indexes
+  scripts/deemed_approval.py     Statutory approval scheduler
+  templates/                     Citizen and department views
+  tests/                         Focused regression tests
+smsgw/                            Internal simulated SMS gateway
+seed/                             Database seed data
+fixes/                            Issue documentation and presentation summary
+nginx/                            HTTP and TLS reverse-proxy configurations
+docker-compose.yml                Local and EC2 service topology
+.env.example                      Deployment secret template
 ```
 
 ## Run locally
 
-### Prerequisites
+### Requirements
 
 - Docker Engine
 - Docker Compose v2
 
-Create local secrets before starting:
+Create a local environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-Replace every placeholder in `.env` with non-committed values. For a local
-test deployment, a generated secret and strong development passwords are
-sufficient.
+Replace the placeholder values in `.env` with development-only secrets. Do
+not commit `.env`.
 
-Start the stack:
+Start the services:
 
 ```bash
 docker compose up -d --build
@@ -81,14 +115,13 @@ The portal is available at:
 http://localhost:8000
 ```
 
-The simulated SMS gateway is intentionally **not** exposed through the public
-portal. The application communicates with it over Docker's private network.
-Its messages are in-memory and are cleared when the gateway container
-restarts.
+The SMS gateway is reachable only by the application over the private Docker
+network. Its simulated messages are held in memory and are cleared when the
+gateway container restarts.
 
 ## Production deployment
 
-On the EC2 host:
+On the deployment host:
 
 ```bash
 git pull origin master
@@ -98,12 +131,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-For the public deployment at `https://sewa.mehul.sbs`, first point DNS to the
-EC2 Elastic IP, allow ports 80/443 in the security group, and follow
-[HTTPS_DEPLOYMENT.md](./HTTPS_DEPLOYMENT.md). Nginx terminates TLS and proxies
-to the private Flask container; port 8000 is not published publicly.
-
-Set these values in `.env`:
+Required environment variables:
 
 ```env
 SEWA_SECRET_KEY=<long-random-Flask-session-secret>
@@ -112,70 +140,58 @@ SEWA_ADMIN_PASSWORD=<long-random-admin-password>
 SEWA_DB_PASSWORD=<PostgreSQL-password>
 ```
 
-Use a secret manager or protected server file for production values. Never
-commit `.env`.
+For `sewa.mehul.sbs`, configure the DNS `A` record to the EC2 Elastic IP and
+allow inbound TCP ports 80 and 443 in the EC2 security group. Use the Nginx
+configurations in [nginx/](./nginx/) for the ACME challenge and TLS
+termination. Do not expose ports 8000, 5432, or 8025.
 
-### Existing PostgreSQL volume
+### Protecting existing data
 
-The files mounted under `docker-entrypoint-initdb.d` run only when PostgreSQL
-initializes a new data volume. Do **not** run `docker compose down -v` on a
-production deployment; that can delete citizen data.
+PostgreSQL initialization scripts run only when a new database volume is
+created. Never use `docker compose down -v` on a deployment containing
+citizen data.
 
-For an existing database, apply the newer query index manually:
+For an existing database, apply the performance index explicitly:
 
 ```bash
 docker compose exec db psql -U sewasetu -d sewasetu -c \
 "CREATE INDEX IF NOT EXISTS applications_status_submitted_idx ON applications (status, submitted_at);"
 ```
 
-If the database password itself must be rotated, change it inside PostgreSQL,
-update `SEWA_DB_PASSWORD` in `.env`, and restart the services. The exact
-rotation procedure is documented in
-[DATA_EXPOSURE_FIX.md](./fixes/DATA_EXPOSURE_FIX.md).
-
-Verify the scheduler after deployment:
+Check the scheduler after deployment:
 
 ```bash
 docker compose logs --tail=100 scheduler
 docker compose exec scheduler python /app/scripts/deemed_approval.py
 ```
 
-The command reports how many overdue applications were persisted as deemed
-approved. The scheduled job uses Asia/Kolkata time and loads `app.ini`.
+The scheduler uses Asia/Kolkata time and reads `app.ini`. Credentials that
+were previously present in repository history should be rotated before
+production use.
 
-## Portal routes
+## Important routes
 
 | Purpose | Route |
-|---|---|
+| --- | --- |
 | Citizen landing page | `/` |
 | Start an application | `/apply` |
 | Citizen status login | `/status` |
 | Application status | `/application/<id>` |
-| Edit eligible application | `/application/<id>/edit` |
-| Department admin login | `/admin` |
-| Admin dashboard | `/admin/dashboard` |
-| Admin application list | `/admin/applications` |
-
-Admin credentials are deployment secrets and are not documented in this
-repository.
+| Edit an eligible application | `/application/<id>/edit` |
+| Department login | `/admin` |
+| Department dashboard | `/admin/dashboard` |
+| Department application list | `/admin/applications` |
 
 ## Verification
 
-Run the focused tests:
+Run the focused regression suite:
 
 ```bash
 cd app
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-The current focused suite covers:
-
-- Unicode name preservation and character limits.
-- Strict date parsing.
-- Age boundary behavior on the application date.
-- Existing upload validation behavior.
-
-Additional verification:
+Run syntax and whitespace checks from the project root:
 
 ```bash
 python3 -m py_compile app/app.py app/application_validation.py \
@@ -183,39 +199,50 @@ python3 -m py_compile app/app.py app/application_validation.py \
 git diff --check
 ```
 
-## Evidence and presentation
+The tests cover Unicode name handling, strict date parsing, age-boundary
+behavior, and upload validation. The issue-specific documentation also records
+the production log evidence and verification for performance, scheduler, and
+security changes.
 
-The supplied production logs were used to investigate the incidents:
+## Documentation and evidence
 
-- The deemed-approval job succeeded through 14 March 2026, then failed because
-  it referenced the nonexistent `config/settings.ini`.
-- Month-end traffic produced PostgreSQL `too many clients already` errors and
-  30-second declaration timeouts.
-- A security review identified public SMS history, unauthorized application
-  access, unprotected acknowledgment PDFs, SQL injection in password reset,
-  and committed credentials.
+The [fixes/](./fixes/) directory contains the detailed engineering record:
 
-The complete documentation is organized in [fixes/](./fixes/). For the
-three-minute Loom, use [FIXES_SUMMARY.md](./fixes/FIXES_SUMMARY.md), which
-covers the problem, evidence, fix, verification, and the deliberate decision
-not to redesign the already usable frontend.
+- [APPLICATION_VALIDATION_FIX.md](./fixes/APPLICATION_VALIDATION_FIX.md)
+- [DEEMED_APPROVAL_FIX.md](./fixes/DEEMED_APPROVAL_FIX.md)
+- [EDIT_APPLICATION_FIX.md](./fixes/EDIT_APPLICATION_FIX.md)
+- [PERFORMANCE_FIX.md](./fixes/PERFORMANCE_FIX.md)
+- [DATA_EXPOSURE_FIX.md](./fixes/DATA_EXPOSURE_FIX.md)
+- [UPLOAD_SECURITY_FIX.md](./fixes/UPLOAD_SECURITY_FIX.md)
+- [FIXES_SUMMARY.md](./fixes/FIXES_SUMMARY.md)
 
-## Scope decision
+The supplied production logs showed two principal operational failures:
 
-The existing frontend was already straightforward for the citizen journey, so
-this submission avoids a visual redesign. Frontend changes were limited to
-functional improvements: validation hints, clearer error messages, the edit
-application action, and deemed-approval status messaging. The priority was
-protecting citizens and keeping the statutory service reliable.
+1. The deemed-approval scheduler referenced `config/settings.ini`, while the
+   deployed file was `config/app.ini`. This stopped overdue applications from
+   being processed.
+2. Peak declaration traffic exhausted PostgreSQL connections and produced
+   30-second timeouts. The declaration path also performed database work, PDF
+   generation, filesystem operations, and synchronous SMS delivery in one
+   request.
 
-## Operational cautions
+These root causes, the resulting changes, and the trade-offs are explained in
+[PERFORMANCE_FIX.md](./fixes/PERFORMANCE_FIX.md) and
+[DEEMED_APPROVAL_FIX.md](./fixes/DEEMED_APPROVAL_FIX.md).
 
-- Do not expose PostgreSQL or the SMS gateway port publicly.
-- Do not commit `.env`, credentials, production logs, or citizen data.
-- Do not delete the `pgdata` volume during deployment.
-- The Nginx and Certbot services share the declared `certbot-www` and
-  `letsencrypt` volumes; both must remain in the Compose file for certificate
-  issuance and renewal.
-- Rotate any credentials that were previously present in repository history.
-- Use HTTPS, rate limiting, CSRF protection, MFA for staff, and centralized
-  audit logging in a production hardening phase.
+## Scope and design decision
+
+No visual redesign was introduced because the existing citizen interface was
+already usable for the intended workflow. Frontend changes were limited to
+functional improvements: validation guidance, clearer error handling, the
+application edit action, and deemed-approval status messaging. Development
+effort was concentrated on data integrity, security, statutory behavior, and
+reliability.
+
+## Production security notes
+
+- Keep `.env`, credentials, logs, and citizen data outside version control.
+- Restrict database and SMS gateway access to the private Docker network.
+- Use HTTPS for public traffic.
+- Consider rate limiting, CSRF protection, MFA for department users, and
+  centralized audit logging as further production hardening.
