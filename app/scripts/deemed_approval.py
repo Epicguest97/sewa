@@ -6,13 +6,15 @@ Under the Purvanchal Right to Public Services Act, an application not processed
 within the statutory SLA stands approved. This job marks such applications
 DEEMED_APPROVED and notifies the applicant by SMS.
 
-Scheduled via cron, 02:00 daily. See deploy/crontab.
+Scheduled via cron, 02:00 daily. See deploy/crontab. Citizen status pages also
+project an overdue pending application as approved before this job runs.
 """
 
 import os
 import sys
 import configparser
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import requests
@@ -20,12 +22,13 @@ import requests
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 config = configparser.ConfigParser()
-CONFIG_PATH = os.path.join(BASE_DIR, "config", "settings.ini")
+CONFIG_PATH = os.path.join(BASE_DIR, "config", "app.ini")
 with open(CONFIG_PATH) as fh:
     config.read_file(fh)
 
 SLA_DAYS = config.getint("pension", "sla_days")
 SMS_GATEWAY_URL = config.get("app", "sms_gateway_url")
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
 
 def main():
@@ -37,13 +40,15 @@ def main():
         password=config.get("database", "password"),
     )
     cur = conn.cursor()
-    cutoff = datetime.now() - timedelta(days=SLA_DAYS)
+    now = datetime.now(INDIA_TZ)
+    database_now = now.replace(tzinfo=None)
+    cutoff = database_now - timedelta(days=SLA_DAYS)
     cur.execute(
         """UPDATE applications
            SET status = 'DEEMED_APPROVED', decided_at = %s, decided_by = 'RTPS-AUTO'
-           WHERE status = 'PENDING' AND submitted_at < %s
+           WHERE status = 'PENDING' AND submitted_at <= %s
            RETURNING application_no, mobile""",
-        (datetime.now(), cutoff))
+        (database_now, cutoff))
     rows = cur.fetchall()
     conn.commit()
     for app_no, mobile in rows:
@@ -54,8 +59,8 @@ def main():
                         "under the RTPS Act." % app_no}, timeout=5)
         except Exception:
             pass
-    print("%s deemed approval: %d applications approved"
-          % (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), len(rows)))
+    print("%s IST deemed approval: %d applications approved"
+          % (now.strftime("%Y-%m-%d %H:%M:%S"), len(rows)))
     cur.close()
     conn.close()
 

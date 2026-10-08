@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS applications (
     decided_by      VARCHAR(50)
 );
 
+COMMENT ON COLUMN applications.submitted_at IS
+    'Application receipt time in Asia/Kolkata, stored as a timestamp without time zone';
+
 -- A mobile number is the verified identity used to start an application.
 -- Keep this constraint in the database so concurrent submissions cannot
 -- create two applications for the same verified person.

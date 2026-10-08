@@ -14,7 +14,8 @@ import random
 import hashlib
 import configparser
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta, time
+from zoneinfo import ZoneInfo
 
 import requests
 import psycopg2
@@ -39,8 +40,15 @@ ADMIN_PASSWORD = "sewasetu@123"
 SMS_GATEWAY_URL = config.get("app", "sms_gateway_url")
 OTP_VALIDITY_SECONDS = config.getint("app", "otp_validity_seconds")
 UPLOAD_DIR = config.get("app", "upload_dir")
-SCHEME_DEADLINE = datetime.strptime(config.get("pension", "scheme_deadline"),
-                                    "%Y-%m-%d %H:%M")
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
+SCHEME_DEADLINE_DATE = datetime.strptime(
+    config.get("pension", "scheme_deadline"), "%Y-%m-%d %H:%M"
+).date()
+# The configured date denotes the final day of applications. Close at the
+# following midnight in India Standard Time.
+SCHEME_DEADLINE = datetime.combine(
+    SCHEME_DEADLINE_DATE + timedelta(days=1), time.min, tzinfo=INDIA_TZ
+)
 MIN_AGE = config.getint("pension", "min_age")
 SLA_DAYS = config.getint("pension", "sla_days")
 
@@ -72,6 +80,14 @@ def hash_password(p):
     return hashlib.sha256(p.encode("utf-8")).hexdigest()
 
 
+def india_now():
+    return datetime.now(INDIA_TZ)
+
+
+def database_now():
+    return india_now().replace(tzinfo=None)
+
+
 def send_sms(mobile, text):
     try:
         requests.post(SMS_GATEWAY_URL + "/api/send",
@@ -81,14 +97,14 @@ def send_sms(mobile, text):
 
 
 def deadline_remaining():
-    delta = SCHEME_DEADLINE - datetime.now()
+    delta = SCHEME_DEADLINE - india_now()
     if delta.total_seconds() <= 0:
         return None
     return int(delta.total_seconds() // 3600)
 
 
 def new_application_no():
-    return "SSP" + datetime.now().strftime("%y") + str(random.randint(100000, 999999))
+    return "SSP" + india_now().strftime("%y") + str(random.randint(100000, 999999))
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +155,7 @@ def apply():
         conn = get_db()
         cur = conn.cursor()
         cur.execute("INSERT INTO otps (mobile, code, created_at) VALUES (%s, %s, %s)",
-                    (mobile, code, datetime.now()))
+                    (mobile, code, database_now()))
         conn.commit()
         cur.close(); conn.close()
         send_sms(mobile, "Your Sewa Setu OTP is %s. Valid for 5 minutes." % code)
@@ -169,7 +185,7 @@ def verify():
         row = cur.fetchone()
         cur.close(); conn.close()
         if row and row[0] == code:
-            age = (datetime.now() - row[1]).total_seconds()
+            age = (database_now() - row[1]).total_seconds()
             if age > OTP_VALIDITY_SECONDS:
                 app.logger.warning("otp expired mobile=%s age=%ds" % (mobile, int(age)))
                 flash("OTP expired. Please request a new OTP.")
@@ -200,7 +216,7 @@ def form_step(step):
             if dob is None:
                 flash("Please enter date of birth in DD/MM/YYYY format.")
                 return render_template("form_step1.html", data=data, blocks=BLOCKS)
-            today = date.today()
+            today = india_now().date()
             if dob > today:
                 flash("Date of birth cannot be in the future.")
                 return render_template("form_step1.html", data=data, blocks=BLOCKS)
@@ -284,7 +300,7 @@ def handle_submission():
         flash("Please enter date of birth in DD/MM/YYYY format.")
         return redirect(url_for("form_step", step=1))
 
-    today = date.today()
+    today = india_now().date()
     if dob > today:
         flash("Date of birth cannot be in the future.")
         return redirect(url_for("form_step", step=1))
@@ -294,7 +310,7 @@ def handle_submission():
               % MIN_AGE)
         return redirect(url_for("form_step", step=1))
 
-    if datetime.now() > SCHEME_DEADLINE:
+    if india_now() >= SCHEME_DEADLINE:
         flash("The application deadline has passed.")
         return redirect(url_for("index"))
 
@@ -319,7 +335,7 @@ def handle_submission():
                RETURNING id""",
             (app_no, name, mobile, dob, gender, marital, husband_name,
              husband_employer, village, block, bank_account, ifsc, doc_path,
-             datetime.now()))
+             database_now()))
     except psycopg2.IntegrityError:
         conn.rollback()
         cur.close(); conn.close()
@@ -439,6 +455,11 @@ def view_application(app_id):
     cur.close(); conn.close()
     if not row:
         abort(404)
+    cutoff = database_now() - timedelta(days=SLA_DAYS)
+    effective_status = row[8]
+    if effective_status == "PENDING" and row[9] <= cutoff:
+        effective_status = "DEEMED_APPROVED"
+    row = row[:8] + (effective_status,) + row[9:]
     return render_template("application.html", a=row, app_id=app_id)
 
 
@@ -507,7 +528,8 @@ def admin_dashboard():
     cur.execute("SELECT status, count(*) FROM applications GROUP BY status")
     by_status = cur.fetchall()
     cur.execute("SELECT count(*) FROM applications WHERE status = 'PENDING' "
-                "AND submitted_at < %s", (datetime.now() - timedelta(days=SLA_DAYS),))
+                "AND submitted_at <= %s",
+                (database_now() - timedelta(days=SLA_DAYS),))
     overdue = cur.fetchone()[0]
     cur.execute("SELECT block, count(*) FROM applications WHERE status = 'PENDING' "
                 "GROUP BY block ORDER BY count(*) DESC")
@@ -558,7 +580,7 @@ def admin_approve(app_id):
     conn = get_db()
     cur = conn.cursor()
     cur.execute("UPDATE applications SET status = 'APPROVED', decided_at = %s "
-                "WHERE id = %s", (datetime.now(), app_id))
+                "WHERE id = %s", (database_now(), app_id))
     conn.commit()
     cur.close(); conn.close()
     flash("Application approved.")
@@ -572,7 +594,7 @@ def admin_reject(app_id):
     conn = get_db()
     cur = conn.cursor()
     cur.execute("UPDATE applications SET status = 'REJECTED', decided_at = %s "
-                "WHERE id = %s", (datetime.now(), app_id))
+                "WHERE id = %s", (database_now(), app_id))
     conn.commit()
     cur.close(); conn.close()
     flash("Application rejected.")

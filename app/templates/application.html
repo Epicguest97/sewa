@@ -10,7 +10,10 @@
   <tr><th>Block</th><td>{{ a[5] }}</td></tr>
   <tr><th>Bank Account</th><td>{{ a[6] }}</td></tr>
   <tr><th>IFSC</th><td>{{ a[7] }}</td></tr>
-  <tr><th>Status</th><td><b>{{ a[8] }}</b></td></tr>
+  <tr><th>Status</th><td><b>{% if a[8] == 'DEEMED_APPROVED' %}APPROVED{% else %}{{ a[8] }}{% endif %}</b></td></tr>
+  {% if a[8] == 'DEEMED_APPROVED' %}
+  <tr><th>Approval basis</th><td>Approved under the RTPS Act because it was not processed within 15 days.</td></tr>
+  {% endif %}
   <tr><th>Submitted</th><td>{{ a[9] }}</td></tr>
   <tr><th>Decided</th><td>{{ a[10] or '-' }}</td></tr>
 </table>
