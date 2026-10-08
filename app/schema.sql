@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS applications (
     decided_by      VARCHAR(50)
 );
 
+-- A mobile number is the verified identity used to start an application.
+-- Keep this constraint in the database so concurrent submissions cannot
+-- create two applications for the same verified person.
+CREATE UNIQUE INDEX IF NOT EXISTS applications_mobile_unique
+    ON applications (mobile);
+
 -- Status portal accounts (created at submission time)
 CREATE TABLE IF NOT EXISTS portal_users (
     mobile        VARCHAR(15) PRIMARY KEY,

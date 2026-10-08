@@ -22,6 +22,7 @@ from flask import (Flask, request, session, redirect, url_for, render_template,
                    flash, send_file, abort, jsonify)
 from fpdf import FPDF
 from upload_validation import validate_uploaded_document
+from application_validation import age_on_date, parse_dob, sanitize
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -65,16 +66,6 @@ def get_db():
         user=config.get("database", "user"),
         password=config.get("database", "password"),
     )
-
-
-def sanitize(value, maxlen=20):
-    # Trim input to safe length for downstream systems (NIC mandate 2019:
-    # legacy disbursement interface accepts fixed-width fields).
-    if value is None:
-        return ""
-    value = value.strip()
-    encoded = value.encode("utf-8")[:maxlen]
-    return encoded.decode("utf-8", errors="ignore")
 
 
 def hash_password(p):
@@ -200,6 +191,24 @@ def form_step(step):
         data = session.get("form_data", {})
         for k, v in request.form.items():
             data[k] = v
+        if step == 1:
+            name = sanitize(data.get("applicant_name", ""), maxlen=100)
+            dob = parse_dob(data.get("dob", ""))
+            if not name:
+                flash("Please enter the applicant's full name.")
+                return render_template("form_step1.html", data=data, blocks=BLOCKS)
+            if dob is None:
+                flash("Please enter date of birth in DD/MM/YYYY format.")
+                return render_template("form_step1.html", data=data, blocks=BLOCKS)
+            today = date.today()
+            if dob > today:
+                flash("Date of birth cannot be in the future.")
+                return render_template("form_step1.html", data=data, blocks=BLOCKS)
+            if age_on_date(dob, today) < MIN_AGE:
+                flash("Applicant must be at least %d years old on the date of application."
+                      % MIN_AGE)
+                return render_template("form_step1.html", data=data, blocks=BLOCKS)
+            data["applicant_name"] = name
         session["form_data"] = data
         if step < 3:
             return redirect(url_for("form_step", step=step + 1))
@@ -250,7 +259,7 @@ def handle_submission():
     data = session.get("form_data", {})
     doc_path = session.get("doc_path", "")
 
-    name = sanitize(data.get("applicant_name", ""))
+    name = sanitize(data.get("applicant_name", ""), maxlen=100)
     village = data.get("village", "").strip()
     block = data.get("block", "").strip()
     gender = data.get("gender", "")
@@ -270,22 +279,19 @@ def handle_submission():
             flash("Something went wrong. Please try again.")
             return redirect(url_for("form_step", step=1))
 
-    # lenient date parsing to reduce rejections (CR-2024-117)
-    dob = None
-    for fmt in ("%m/%d/%Y", "%d/%m/%Y"):
-        try:
-            dob = datetime.strptime(dob_raw, fmt).date()
-            break
-        except ValueError:
-            continue
+    dob = parse_dob(dob_raw)
     if dob is None:
-        flash("Something went wrong. Please try again.")
+        flash("Please enter date of birth in DD/MM/YYYY format.")
         return redirect(url_for("form_step", step=1))
 
     today = date.today()
-    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if dob > today:
+        flash("Date of birth cannot be in the future.")
+        return redirect(url_for("form_step", step=1))
+    age = age_on_date(dob, today)
     if age < MIN_AGE:
-        flash("Applicant must be above %d years of age to be eligible." % MIN_AGE)
+        flash("Applicant must be at least %d years old on the date of application."
+              % MIN_AGE)
         return redirect(url_for("form_step", step=1))
 
     if datetime.now() > SCHEME_DEADLINE:
@@ -303,16 +309,23 @@ def handle_submission():
         return redirect(url_for("index"))
 
     app_no = new_application_no()
-    cur.execute(
-        """INSERT INTO applications
-           (application_no, applicant_name, mobile, dob, gender, marital_status,
-            husband_name, husband_employer, village, block, bank_account, ifsc,
-            doc_path, status, submitted_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
-           RETURNING id""",
-        (app_no, name, mobile, dob, gender, marital, husband_name,
-         husband_employer, village, block, bank_account, ifsc, doc_path,
-         datetime.now()))
+    try:
+        cur.execute(
+            """INSERT INTO applications
+               (application_no, applicant_name, mobile, dob, gender, marital_status,
+                husband_name, husband_employer, village, block, bank_account, ifsc,
+                doc_path, status, submitted_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
+               RETURNING id""",
+            (app_no, name, mobile, dob, gender, marital, husband_name,
+             husband_employer, village, block, bank_account, ifsc, doc_path,
+             datetime.now()))
+    except psycopg2.IntegrityError:
+        conn.rollback()
+        cur.close(); conn.close()
+        flash("An application already exists for this mobile number. "
+              "Duplicate applications are not permitted.")
+        return redirect(url_for("index"))
     new_id = cur.fetchone()[0]
 
     # status portal account; password is DOB as DDMMYYYY per dept. circular
@@ -346,9 +359,17 @@ def generate_acknowledgment(cur, app_id):
     row = cur.fetchone()
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 14)
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if os.path.exists(font_path):
+        pdf.add_font("DejaVu", "", font_path)
+        pdf.add_font("DejaVu", "B", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+        pdf.add_font("DejaVu", "I", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf")
+        font_name = "DejaVu"
+    else:
+        font_name = "Helvetica"
+    pdf.set_font(font_name, "B", 14)
     pdf.cell(0, 10, "GOVERNMENT OF PURVANCHAL", ln=1, align="C")
-    pdf.set_font("Helvetica", "", 11)
+    pdf.set_font(font_name, "", 11)
     pdf.cell(0, 8, "Department of Social Welfare", ln=1, align="C")
     pdf.cell(0, 8, "Old Age Pension Scheme - Acknowledgment", ln=1, align="C")
     pdf.ln(4)
@@ -359,7 +380,7 @@ def generate_acknowledgment(cur, app_id):
         pdf.line(x, 12, x + 0.5, 12)
     labels = ["Application No", "Applicant Name", "Mobile", "Date of Birth",
               "Village", "Block", "Bank Account", "IFSC", "Submitted At", "Status"]
-    pdf.set_font("Helvetica", "", 10)
+    pdf.set_font(font_name, "", 10)
     for label, val in zip(labels, row):
         try:
             pdf.cell(60, 8, label, border=1)
@@ -367,7 +388,7 @@ def generate_acknowledgment(cur, app_id):
         except Exception:
             pdf.cell(0, 8, "?", border=1, ln=1)
     pdf.ln(6)
-    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_font(font_name, "I", 9)
     pdf.multi_cell(0, 5, "This is a computer generated acknowledgment. Processing SLA "
                          "as per the Purvanchal Right to Public Services Act applies.")
     return bytes(pdf.output())
