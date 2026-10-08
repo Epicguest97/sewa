@@ -44,7 +44,7 @@ to obtain mobile numbers and other personal information:
 
 ## Deployment
 
-Create `.env` on the server from [.env.example](./.env.example), replace every
+Create `.env` on the server from [../.env.example](../.env.example), replace every
 placeholder with a strong random value, and keep the file out of Git:
 
 ```bash
