@@ -65,3 +65,5 @@ volumes:
   pgdata:
   uploads:
   applogs:
+  certbot-www:
+  letsencrypt:

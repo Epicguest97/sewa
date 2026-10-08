@@ -213,6 +213,9 @@ protecting citizens and keeping the statutory service reliable.
 - Do not expose PostgreSQL or the SMS gateway port publicly.
 - Do not commit `.env`, credentials, production logs, or citizen data.
 - Do not delete the `pgdata` volume during deployment.
+- The Nginx and Certbot services share the declared `certbot-www` and
+  `letsencrypt` volumes; both must remain in the Compose file for certificate
+  issuance and renewal.
 - Rotate any credentials that were previously present in repository history.
 - Use HTTPS, rate limiting, CSRF protection, MFA for staff, and centralized
   audit logging in a production hardening phase.
