@@ -4,8 +4,7 @@
 __pycache__/
 *.py[cod]
 
-# Supplied production data and media; do not publish these
-seed/seed.sql
+# Supplied media; do not publish this
 logs/
 dc-briefing.mp3
 
