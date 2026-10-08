@@ -32,6 +32,9 @@ COMMENT ON COLUMN applications.submitted_at IS
 CREATE UNIQUE INDEX IF NOT EXISTS applications_mobile_unique
     ON applications (mobile);
 
+CREATE INDEX IF NOT EXISTS applications_status_submitted_idx
+    ON applications (status, submitted_at);
+
 -- Status portal accounts (created at submission time)
 CREATE TABLE IF NOT EXISTS portal_users (
     mobile        VARCHAR(15) PRIMARY KEY,

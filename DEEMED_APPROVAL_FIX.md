@@ -30,3 +30,11 @@ The status projection uses the same 15-day cutoff as the scheduled job, so
 the citizen-facing result does not depend on cron timing. Existing rows are
 not changed by this fix; the scheduled job updates only untouched `PENDING`
 rows that have crossed the deadline.
+
+## Operational incident evidence
+
+The supplied production `cron.log` shows successful runs through 14 March
+2026, followed by repeated `FileNotFoundError` failures for
+`/app/config/settings.ini`. The deployed application ships
+`/app/config/app.ini`, so no applications were persisted as deemed-approved
+after the configuration mismatch.
